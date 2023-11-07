@@ -1,0 +1,210 @@
+---
+title: "Cyclistic Users"
+author: "Natalia Romanini"
+date: "2023-11-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+chooseCRANmirror(graphics=FALSE, ind=1)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Usuarios Cyclistic
+**Tarea:** 
+
+* Determinar las diferencias entre los usuarios que son miembros de la aplicacién, a       través de una subscripción, de aquellos que son usuarios ocasionales
+
+### Data disponible
+
+Se solicita se usen los 12 últimos meses de registro de los usuarios, obtenidos desde el siguiente enlace: <https://divvy-tripdata.s3.amazonaws.com/index.html>
+Al descargar los archivos, son 12 carpetas en .zip y cada una contiene un mes de registros, se descomprimen las carpetas y se renombra cada uno de los archivos .csv a fin de comenzar a trabjar con ellos desde R Studio por la magnitud y peso de la data
+
+### Preparamos nuestro espacio de trabajo
+
+Creamos una carpeta que contiene 12 archivos .csv y para poder importarlos, ordenarlos y limpiarlos y luego trabajar con ellos y realizar visualizaciones, instalamos y llamamos las siguientes librerias. 
+```{r}
+install.packages("tidyverse")
+library(tidyverse)
+
+library(dplyr)
+install.packages("gglopt2")
+library(ggplot2)
+install.packages("geosphere")
+library(geosphere)
+library(wesanderson)
+
+
+month1 <- read.csv('C:/Users/natal/OneDrive/Documents/bike_data/month1_oct2022.csv')
+month2 <- read.csv('C:/Users/natal/OneDrive/Documents/bike_data/month2_nov2022.csv')
+month3 <- read.csv('C:/Users/natal/OneDrive/Documents/bike_data/month3_dic2022.csv')
+month4 <- read.csv('C:/Users/natal/OneDrive/Documents/bike_data/month4_ene2023.csv')
+month5 <- read.csv('C:/Users/natal/OneDrive/Documents/bike_data/month5_feb2023.csv')
+month6 <- read.csv('C:/Users/natal/OneDrive/Documents/bike_data/month6_mar2023.csv')
+month7 <- read.csv('C:/Users/natal/OneDrive/Documents/bike_data/month7_abr2023.csv')
+month8 <- read.csv('C:/Users/natal/OneDrive/Documents/bike_data/month8_may2023.csv')
+month9 <- read.csv('C:/Users/natal/OneDrive/Documents/bike_data/month9_jun2023.csv')
+month10 <- read.csv('C:/Users/natal/OneDrive/Documents/bike_data/month10_jul2023.csv')
+month11 <- read.csv('C:/Users/natal/OneDrive/Documents/bike_data/month11_ago2023.csv')
+month12 <- read.csv('C:/Users/natal/OneDrive/Documents/bike_data/month12_sep2023.csv')
+```
+(las rutas mostradas aqui son de PC y de archivos en un disco local)
+
+### Revisando la data, sus columnas y tipos de datos.
+
+* Se revisan las columnas de 3 archivos.
+```{r}
+colnames(month1)
+colnames(month6)
+colnames(month12)
+```
+
+* Coinciden en la cantidad de columnas y nombres, ahora revisemos el tipo de dato
+```{r}
+glimpse(month3)
+glimpse(month8)
+glimpse(month11)
+```
+ 
+##### Al ver que todos los archivos comparten el mismo tipo de información, podemos unirlos en uno solo.
+
+```{r}
+all_trips<-bind_rows(month1, month2, month3, month4, month5, month6, month7, month8, month9, month10, month11, month12)
+```
+
+#### Modifiquemos algunos nombres de columnas y sus características y creemos una columna que cuente el tiempo de cada viaje y otra que nos señale el dia de esos viajes
+```{r}
+all_trips <-rename(all_trips, trips_id = ride_id, start_time = started_at, 
+                   end_time = ended_at, usertype = member_casual)
+
+
+```
+**Y revisemos nuestro dataframe **
+```{r}
+colnames(all_trips) 
+nrow(all_trips) 
+dim(all_trips)  
+head(all_trips)  
+str(all_trips)  
+summary(all_trips)  
+n_distinct(all_trips$usertype)
+```
+Todo parece correcto.
+
+
+Busquemos **valores faltantes** para conocer si afectaran nuestro analisis y deben retirar o son despreciables para el objetivo
+
+```{r}
+trips_na <- all_trips %>% filter(if_any(everything(), is.na))
+```
+Podemos agrupar por tipo de usuario para revisar
+
+```{r}
+trips_na %>% group_by(usertype) %>%
+  count(usertype)
+```
+Nos damos cuenta que hay 6642 registros que no tienen informacion de estacion de llegada y por tanto tampoco de su punto geografico y que esto principalmente afecta a usuarios "casual" pero la cantidad no es tanta en comparacion con la muestra total por lo que la podemos mantener, pero revisaremos si algo es anormal
+```{r}
+trips_na <- trips_na %>% mutate(trip_duration = difftime(as.POSIXct(end_time), as.POSIXct(start_time), units = "hours"))
+mean(trips_na$trip_duration)
+```
+El tiempo promedio de viaje es superior a 46 horas, lo que no parece razonable, por lo que ** eliminaremos esos registros ** y agregamos una columna de duracion de viaje.
+
+### Últimas transformaciones de nuestro data frame.
+
+Eliminemos las filas que no tiene informacion sobre el punto final del viaje y creemos una columna que determine la duracion de los viajes en horas
+```{r}
+all_trips_clean <- all_trips[complete.cases(all_trips), ]
+all_trips_clean <- all_trips_clean %>% mutate(trip_duration = difftime(as.POSIXct(end_time), as.POSIXct(start_time), units = "hours"))
+
+```
+
+
+Para terminar las transformaciones del datafram, agregaremos una columna que nos señale la distancia que se recorrió en cada viaje y el dia de la semana en que se hizo
+```{r}
+all_trips_clean <- all_trips_clean %>% mutate(distance=distHaversine(matrix(c(start_lng,start_lat), ncol = 2), matrix(c(end_lng,end_lat), ncol=2)))
+
+all_trips_clean <- all_trips_clean %>% mutate(weekday = wday(start_time, label = TRUE))
+```
+
+### Ahora podemos empezar a explorar los datos.
+##### cuántos de los viajes los hicieron miembros y cuántos fueron hechos por usuarios casuales.(Nótese que no hay informacion para poder determinar si una persona determinada hizo uno o más viajes) Para eso, creamos una tabla. 
+```{r}
+usertypecantidad <- all_trips_clean %>% group_by(usertype) %>%
+  count(usertype)
+```
+Y ahora a esos números le podemos dar mas sentido e informacion para graficar y que nos muestre un porcentaje:
+```{r}
+usertypecantidad <- usertypecantidad %>% mutate(pct = paste(round(n/sum(usertypecantidad$n)*100), "%", sep =""))
+usertypecantidad <-usertypecantidad %>% mutate(cantidad = round(n/sum(usertypecantidad$n)*100))
+usertypecantidad <-usertypecantidad %>% mutate(pct_y = 100 - cantidad )
+
+ggplot(usertypecantidad, aes(x = 1, y = cantidad, fill = usertype)) + 
+  geom_col(position = "stack", orientation = "x") + 
+  geom_text(aes(x=1, y = pct_y, label = pct), col="white", position = position_stack(vjust = 0.64))+
+  coord_polar(theta = "y", direction = -1) + 
+  theme_void() + scale_fill_manual(values=wes_palette(n=2, name="GrandBudapest2")) + ggtitle("Porcentaje de viajes realizado por cada tipo de usuario")
+
+```
+
+
+#### Podemos comparar los tipos de bicicleta que usa cada tipo de usuario.
+
+```{r}
+ridetype <- all_trips_clean %>% group_by(rideable_type) %>%
+  count(usertype)
+ggplot(ridetype, aes(fill=usertype, y=n, x=rideable_type)) + 
+  geom_bar(position='dodge', stat="identity")+scale_fill_manual(values=wes_palette(n=2, name="GrandBudapest2")) + labs(x= "Tipo de Vehiculo", y ="cantidad de viajes") + ggtitle("Comparación por tipo de vehículo usado")
+
+```
+
+
+
+Aprendimos que solo los usuarios no miembros utilizan docked bikes, en los otros dos tipos la proporci[on de uso es similar
+
+#### Sobre la distancia que recorre cada tipo de usuario
+
+```{r}
+distanciausuario <- all_trips_clean %>% group_by(usertype) %>%
+  summarise(Mean_distance = mean(distance, na.rm=TRUE), Min_distance= min(distance, na.rm=TRUE), Max_distance = max(distance, na.rm=TRUE))
+
+length(which(all_trips_clean$distance == 0))
+distancia0 <-all_trips_clean %>% group_by(usertype) %>%
+  count(distance == 0)
+ggplot(distancia0, aes(x=usertype, y=n, fill = `distance == 0`)) + 
+  geom_bar(position='dodge', stat="identity")+scale_fill_manual(values=wes_palette(n=2, name="GrandBudapest2")) + labs(x= "compara cuando la distancia es cero", y ="cantidad de viajes", fill = "distancia es 0") + ggtitle("Comparación por entre distacia cero y otras")
+```
+
+No se aprecian diferencias respecto a la distancia que recorren los tipos de usuarios, pero existe un numero alto de viajes con distancia igual a 0, especialmente en usuarios casuales, si se compara con el total de viajes que cada tipo de usuario realiza
+
+#### Días en que se utiliza el servicio. agreguemos una columna con el dia
+
+```{r}
+
+weekdays <- all_trips_clean %>% group_by(usertype, weekday) %>%
+  count(usertype)
+ggplot(weekdays, aes(x = weekday, y = n, fill = usertype)) +
+  geom_col(position = "dodge")+scale_fill_manual(values=wes_palette(n=2, name="GrandBudapest2")) + labs(x= "dias de la semana", y ="cantidad de viajes", fill = "Tipo de Usuario") + ggtitle("Comparación por días de la semana")
+
+
+```
+
+Se aprecia que los usuarios con membresia utilizan mas el servicio en dias de semana y los no miembros fines de semana.
+
+## Conclusiones
+
+Los datos utilizados no permiten responder completamente la pregunta, falta información sobre sexo, edad y cantidad de viajes que realiza cada usuario a fin de poder realizar un perfil detallado, pero si podemos concluir:
+
+* Los usuarios con membresia representan el 67% del la cantidad de viajes 
+* Usuarios suscriptores utilizan mas el servicios los dias de semana.
+* Solo los usuarios casuales utilizan el servicio de docked bikes.
+* No se aprecian diferencias significativas en distancia media y distancia maxima entre   los tipos de usuario
+* la incidencia de falta de datos en la estacion de llegada es mayor en usuarios          casuales.
+
+## Recomendaciones
+
+* Subir los precios para no miembros los fines de semana, a ver si se convierten en       miembros
+* Se necesitan datos de viajes por usuario para revisar la conveniencia económica
+  efectiva de los usuarios sean miembros.
+* Deberia revisarse la app para ver por que falla al guardar la informacion de punto de   término del viaje 
+
